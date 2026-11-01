@@ -1,0 +1,11 @@
+plugins { id 'com.android.application' }
+android {
+ namespace 'io.github.peskysa.valverde'
+ compileSdk 36
+ defaultConfig { applicationId 'io.github.peskysa.valverde'; minSdk 26; targetSdk 36; versionCode 20000; versionName '2.0.0' }
+ signingConfigs { release { storeFile file('release.p12'); storePassword System.getenv('ANDROID_KEY_PASSWORD'); keyAlias 'valverde'; keyPassword System.getenv('ANDROID_KEY_PASSWORD'); storeType 'PKCS12' } }
+ buildTypes { release { signingConfig signingConfigs.release } }
+ compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
+}
+tasks.register('copyWebAssets', Copy) { from '../../dist/web'; into 'src/main/assets' }
+tasks.named('preBuild').configure { dependsOn 'copyWebAssets' }

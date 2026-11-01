@@ -1,0 +1,95 @@
+{
+  "name": "valverde",
+  "version": "2.0.0",
+  "private": true,
+  "description": "Análisis reproducible de volúmenes diarios con datos sintéticos.",
+  "author": "Marco Pescador",
+  "license": "AGPL-3.0-only",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Peskysa/valverde.git"
+  },
+  "scripts": {
+    "test": "node --test tests/core.test.cjs",
+    "build:web": "node scripts/build.cjs",
+    "test:browser": "node tests/browser.cjs",
+    "start": "node scripts/serve.cjs",
+    "build:desktop": "electron-builder --publish never"
+  },
+  "devDependencies": {
+    "playwright": "1.64.1",
+    "electron": "44.7.0",
+    "electron-builder": "26.15.3"
+  },
+  "main": "desktop/main.cjs",
+  "build": {
+    "appId": "io.github.peskysa.valverde",
+    "productName": "Valverde · análisis de envíos",
+    "directories": {
+      "output": "dist/desktop",
+      "buildResources": "assets"
+    },
+    "files": [
+      "desktop/main.cjs",
+      "dist/web/**/*",
+      "assets/icon-512.png",
+      "project.json",
+      "LICENSE",
+      "NOTICE",
+      "THIRD_PARTY.md",
+      "licenses/**/*",
+      "docs/**/*"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "assets/icon-512.png",
+      "signExecutable": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "artifactName": "valverde-Windows-Instalador.exe"
+    },
+    "portable": {
+      "artifactName": "valverde-Portable.exe"
+    },
+    "linux": {
+      "target": [
+        {
+          "target": "deb",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "tar.gz",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "assets/icon-512.png",
+      "category": "Utility",
+      "maintainer": "Marco Pescador",
+      "executableName": "valverde",
+      "artifactName": "valverde-Linux-Portable.${ext}"
+    },
+    "deb": {
+      "artifactName": "valverde-Linux-amd64.deb"
+    }
+  },
+  "packageManager": "pnpm@11.25.0"
+}

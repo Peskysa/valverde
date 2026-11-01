@@ -1,0 +1,192 @@
+name: Compilar, verificar y publicar
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: pnpm/action-setup@v4
+        with:
+          version: '11.25.0'
+          run_install: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+      - run: npm test
+      - run: python -m pip install -r requirements.txt
+      - run: python -m unittest discover -s tests -p "test_*.py"
+      - run: npm run build:web
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:browser
+      - run: python scripts/distribution.py check
+      - run: python scripts/distribution.py web
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web-assets
+          path: dist/web/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: final-web
+          path: dist/valverde-Web.zip
+  desktop:
+    needs: web
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-22.04]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: pnpm/action-setup@v4
+        with:
+          version: '11.25.0'
+          run_install: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pnpm install --frozen-lockfile
+      - run: node node_modules/electron/install.js
+      - uses: actions/download-artifact@v4
+        with:
+          name: web-assets
+          path: dist/web
+      - name: Dependencias gráficas Linux
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y xvfb libgtk-3-0 libnss3 libasound2 libgbm1
+      - run: npm run build:desktop
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      - name: Probar Windows empaquetado
+        if: runner.os == 'Windows'
+        run: node tests/desktop.cjs 'dist/desktop/win-unpacked/Valverde · análisis de envíos.exe'
+      - name: Probar Linux empaquetado
+        if: runner.os == 'Linux'
+        run: xvfb-run -a node tests/desktop.cjs dist/desktop/linux-unpacked/valverde
+      - name: Probar portable y construir Web Portable
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $reportTask = Join-Path $PWD 'test-output/portable-report.json'
+          $processTask = Start-Process -FilePath (Resolve-Path 'dist/desktop/valverde-Portable.exe') -ArgumentList '--smoke',$reportTask -WindowStyle Hidden -Wait -PassThru
+          if ($processTask.ExitCode -ne 0 -or !(Test-Path $reportTask)) { throw 'El portable no ha arrancado' }
+          if (!(Get-Content $reportTask | ConvertFrom-Json).ready) { throw 'No ha cargado la interfaz' }
+          python -m pip install pyinstaller==6.22.3
+          python scripts/runtime_notices.py
+          python -m PyInstaller --noconfirm --onefile --windowed --name valverde-Web-Portable --add-data 'dist/web;dist/web' --add-data 'licenses;licenses' scripts/portable_web.py
+          python scripts/check_portable.py dist/valverde-Web-Portable.exe
+          Copy-Item dist/valverde-Web-Portable.exe dist/desktop/
+      - run: python scripts/distribution.py desktop
+      - uses: actions/upload-artifact@v4
+        with:
+          name: final-${{ runner.os }}
+          path: |
+            dist/desktop/valverde-*.exe
+            dist/desktop/valverde-*.deb
+            dist/desktop/valverde-*.tar.gz
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-report-${{ runner.os }}
+          path: test-output/*report*.json
+      - name: Avisos de runtime portable
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: runtime-notices
+          path: licenses/runtime/
+  android:
+    needs: web
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: web-assets
+          path: dist/web
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+          log-accepted-android-sdk-licenses: false
+      - run: sdkmanager 'platforms;android-36' 'build-tools;36.0.0'
+      - uses: gradle/actions/setup-gradle@v6.4.0
+        with:
+          gradle-version: '8.13'
+      - name: Compilar y verificar firma estable
+        env:
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          ANDROID_KEYSTORE: ${{ secrets.ANDROID_KEYSTORE }}
+        run: |
+          echo "$ANDROID_KEYSTORE" | base64 --decode > android/app/release.p12
+          gradle -p android assembleRelease --no-daemon
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs android/app/build/outputs/apk/release/app-release.apk
+          mkdir -p dist
+          cp android/app/build/outputs/apk/release/app-release.apk dist/valverde-Android.apk
+      - run: python scripts/distribution.py android
+      - uses: actions/upload-artifact@v4
+        with:
+          name: final-android
+          path: dist/valverde-Android.apk
+  publish:
+    needs: [web, desktop, android]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: final-*
+          path: artifacts
+          merge-multiple: true
+      - uses: actions/download-artifact@v4
+        with:
+          name: runtime-notices
+          path: licenses/runtime
+      - run: python scripts/distribution.py finalize artifacts
+      - name: Publicar conjunto verificado
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          version="$(python -c 'import json; print(json.load(open("project.json"))["version"])')"
+          tag="v$version"
+          if [ "$GITHUB_REF_TYPE" = tag ] && [ "$GITHUB_REF_NAME" != "$tag" ]; then exit 1; fi
+          gh release create "$tag" artifacts/* --draft --target "$GITHUB_SHA" --title 'Valverde · análisis de envíos 2.0.0' --notes-file docs/releases/v2.0.0.md
+          gh release edit "$tag" --draft=false --latest
+  pages:
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: web-assets
+          path: web
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: web
+      - uses: actions/deploy-pages@v4
+        id: deployment
